@@ -1,0 +1,59 @@
+From cd7743eb05f7bb25931ff114ae473ffa5b20ba64 Mon Sep 17 00:00:00 2001
+From: Zsombor Klara <zsombor.klara@cloudera.com>
+Date: Tue, 25 Oct 2016 11:10:32 +0200
+Subject: [PATCH 715/723] CLOUDERA-BUILD: CDH-45436: Include hive-exec-core in
+ packaging in cdh5.10
+
+Change-Id: Ibf88763e5a7ba91d98183406280b6af94c34c2bb
+(cherry picked from commit f8445e82e01951c2973da6ed85e2468ddaf7131c)
+---
+ packaging/pom.xml                   |    6 ++++++
+ packaging/src/main/assembly/bin.xml |   12 +++++++++++-
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/packaging/pom.xml b/packaging/pom.xml
+index acda0c2..b00b664 100644
+--- a/packaging/pom.xml
++++ b/packaging/pom.xml
+@@ -153,6 +153,12 @@
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hive</groupId>
++      <artifactId>hive-exec</artifactId>
++      <version>${project.version}</version>
++      <classifier>core</classifier>
++    </dependency>
++    <dependency>
++      <groupId>org.apache.hive</groupId>
+       <artifactId>hive-service</artifactId>
+       <version>${project.version}</version>
+     </dependency>
+diff --git a/packaging/src/main/assembly/bin.xml b/packaging/src/main/assembly/bin.xml
+index 260d8a3..375a38c 100644
+--- a/packaging/src/main/assembly/bin.xml
++++ b/packaging/src/main/assembly/bin.xml
+@@ -41,10 +41,20 @@
+       <excludes>
+         <exclude>org.apache.hadoop:*</exclude>
+         <exclude>org.apache.hive.hcatalog:*</exclude>
+-		    <exclude>org.slf4j:*</exclude>
++        <exclude>org.slf4j:*</exclude>
++        <exclude>org.apache.hive:hive-exec:*:core</exclude>
+       </excludes>
+     </dependencySet>
+     <dependencySet>
++      <outputDirectory>auxlib/</outputDirectory>
++      <unpack>false</unpack>
++      <useProjectArtifact>false</useProjectArtifact>
++      <useStrictFiltering>true</useStrictFiltering>
++      <includes>
++        <include>org.apache.hive:hive-exec:*:core</include>
++      </includes>
++    </dependencySet>
++    <dependencySet>
+       <outputDirectory>hcatalog/share/hcatalog</outputDirectory>
+       <unpack>false</unpack>
+       <useProjectArtifact>false</useProjectArtifact>
+-- 
+1.7.9.5
+

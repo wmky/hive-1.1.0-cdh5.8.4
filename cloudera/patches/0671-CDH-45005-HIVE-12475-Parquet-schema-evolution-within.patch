@@ -1,0 +1,324 @@
+From 2e297ad54bd257c53081a7c2ec8eb1590ffd4908 Mon Sep 17 00:00:00 2001
+From: Mohammad Kamrul Islam <mislam77@yahoo.com>
+Date: Wed, 2 Dec 2015 09:31:42 -0600
+Subject: [PATCH 671/723] CDH-45005: HIVE-12475: Parquet schema evolution
+ within array<struct<>> doesn't work (Mohammad
+ Kamrul Islam, reviewed by Sergio Pena)
+
+Change-Id: I69a1dbf2122ddb60cf867c1820877aaa8207692d
+---
+ data/files/parquet_type_promotion.txt              |    4 +
+ .../serde/ArrayWritableObjectInspector.java        |    8 +-
+ .../clientpositive/parquet_type_promotion.q        |   63 +++++++
+ .../clientpositive/parquet_type_promotion.q.out    |  197 ++++++++++++++++++++
+ 4 files changed, 270 insertions(+), 2 deletions(-)
+ create mode 100644 data/files/parquet_type_promotion.txt
+ create mode 100644 ql/src/test/queries/clientpositive/parquet_type_promotion.q
+ create mode 100644 ql/src/test/results/clientpositive/parquet_type_promotion.q.out
+
+diff --git a/data/files/parquet_type_promotion.txt b/data/files/parquet_type_promotion.txt
+new file mode 100644
+index 0000000..a212d9c
+--- /dev/null
++++ b/data/files/parquet_type_promotion.txt
+@@ -0,0 +1,4 @@
++100|150|155|5643|6666|0.3|0.7|k1:11|k1:71|7,17,22|9,11,13|10,20|k11:4.0|2.3,3.0,5.5|5.7,4.8
++200|250|255|5643|7777|0.4|0.8|k2:14|k2:13|8,17,24|15,17,19|20,20|v11:5.0|3.3,3.1,5.6|5.8,4.7
++300|350|355|7643|8888|0.4|0.9|k3:12|k3:19|9,17,25|21,23,25|30,60|b11:6.0|4.3,3.2,5.7|5.9,4.6
++400|450|455|8643|9999|0.4|0.5|k4:15|k4:23|7,18,27|27,29,31|50,70|d11:8.0|6.3,3.3,5.8|5.0,4.5
+diff --git a/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ArrayWritableObjectInspector.java b/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ArrayWritableObjectInspector.java
+index 3f5d12b..8d5e84e 100644
+--- a/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ArrayWritableObjectInspector.java
++++ b/ql/src/java/org/apache/hadoop/hive/ql/io/parquet/serde/ArrayWritableObjectInspector.java
+@@ -136,10 +136,14 @@ public Object getStructFieldData(final Object data, final StructField fieldRef)
+     if (data == null) {
+       return null;
+     }
+-
+     if (data instanceof ArrayWritable) {
+       final ArrayWritable arr = (ArrayWritable) data;
+-      return arr.get()[((StructFieldImpl) fieldRef).getIndex()];
++      final StructFieldImpl structField = (StructFieldImpl) fieldRef;
++      if (structField.getIndex() < arr.get().length) {
++        return arr.get()[structField.getIndex()];
++      } else {
++        return null;
++      }
+     }
+ 
+     //since setStructFieldData and create return a list, getStructFieldData should be able to
+diff --git a/ql/src/test/queries/clientpositive/parquet_type_promotion.q b/ql/src/test/queries/clientpositive/parquet_type_promotion.q
+new file mode 100644
+index 0000000..5db401f
+--- /dev/null
++++ b/ql/src/test/queries/clientpositive/parquet_type_promotion.q
+@@ -0,0 +1,63 @@
++DROP TABLE parquet_type_promotion_staging;
++DROP TABLE parquet_type_promotion;
++
++SET hive.metastore.disallow.incompatible.col.type.changes=false;
++
++CREATE TABLE parquet_type_promotion_staging (
++  cint int,
++  cint2 int,
++  cint3 int,
++  clong bigint,
++  clong2 bigint,
++  cfloat float,
++  cdouble double,
++  m1 map<string, int>,
++  m2 map<string, bigint>,
++  l1 array<int>,
++  l2 array<bigint>,
++  st1 struct<c1:int, c2:int>,
++  fm1 map<string, float>,
++  fl1 array<float>,
++  fst1 struct<c1:float, c2:float>
++) ROW FORMAT DELIMITED
++FIELDS TERMINATED BY '|'
++COLLECTION ITEMS TERMINATED BY ','
++MAP KEYS TERMINATED BY ':';
++
++LOAD DATA LOCAL INPATH '../../data/files/parquet_type_promotion.txt' OVERWRITE INTO TABLE parquet_type_promotion_staging;
++
++SELECT * FROM parquet_type_promotion_staging;
++
++CREATE TABLE parquet_type_promotion (
++  cint int,
++  cint2 int,
++  cint3 int,
++  clong bigint,
++  clong2 bigint,
++  cfloat float,
++  cdouble double,
++  m1 map<string, int>,
++  m2 map<string, bigint>,
++  l1 array<int>,
++  l2 array<bigint>,
++  st1 struct<c1:int, c2:int>,
++  fm1 map<string, float>,
++  fl1 array<float>,
++  fst1 struct<c1:float, c2:float>
++) STORED AS PARQUET;
++
++INSERT OVERWRITE TABLE parquet_type_promotion
++   SELECT * FROM parquet_type_promotion_staging;
++
++
++-- This test covers HIVE-12475
++
++DROP TABLE arrays_of_struct_to_map;
++CREATE TABLE arrays_of_struct_to_map (locations1 array<struct<c1:int,c2:int>>, locations2 array<struct<f1:int,
++f2:int,f3:int>>) STORED AS PARQUET;
++INSERT INTO TABLE arrays_of_struct_to_map select array(named_struct("c1",1,"c2",2)), array(named_struct("f1",
++77,"f2",88,"f3",99)) FROM parquet_type_promotion LIMIT 1;
++SELECT * FROM arrays_of_struct_to_map;
++ALTER TABLE arrays_of_struct_to_map REPLACE COLUMNS (locations1 array<struct<c1:int,c2:int,c3:int>>, locations2
++array<struct<f1:int,f2:int,f3:int>>);
++SELECT * FROM arrays_of_struct_to_map;
+diff --git a/ql/src/test/results/clientpositive/parquet_type_promotion.q.out b/ql/src/test/results/clientpositive/parquet_type_promotion.q.out
+new file mode 100644
+index 0000000..b1ce3cd
+--- /dev/null
++++ b/ql/src/test/results/clientpositive/parquet_type_promotion.q.out
+@@ -0,0 +1,197 @@
++PREHOOK: query: DROP TABLE parquet_type_promotion_staging
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE parquet_type_promotion_staging
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: DROP TABLE parquet_type_promotion
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: DROP TABLE parquet_type_promotion
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE parquet_type_promotion_staging (
++  cint int,
++  cint2 int,
++  cint3 int,
++  clong bigint,
++  clong2 bigint,
++  cfloat float,
++  cdouble double,
++  m1 map<string, int>,
++  m2 map<string, bigint>,
++  l1 array<int>,
++  l2 array<bigint>,
++  st1 struct<c1:int, c2:int>,
++  fm1 map<string, float>,
++  fl1 array<float>,
++  fst1 struct<c1:float, c2:float>
++) ROW FORMAT DELIMITED
++FIELDS TERMINATED BY '|'
++COLLECTION ITEMS TERMINATED BY ','
++MAP KEYS TERMINATED BY ':'
++PREHOOK: type: CREATETABLE
++PREHOOK: Output: database:default
++PREHOOK: Output: default@parquet_type_promotion_staging
++POSTHOOK: query: CREATE TABLE parquet_type_promotion_staging (
++  cint int,
++  cint2 int,
++  cint3 int,
++  clong bigint,
++  clong2 bigint,
++  cfloat float,
++  cdouble double,
++  m1 map<string, int>,
++  m2 map<string, bigint>,
++  l1 array<int>,
++  l2 array<bigint>,
++  st1 struct<c1:int, c2:int>,
++  fm1 map<string, float>,
++  fl1 array<float>,
++  fst1 struct<c1:float, c2:float>
++) ROW FORMAT DELIMITED
++FIELDS TERMINATED BY '|'
++COLLECTION ITEMS TERMINATED BY ','
++MAP KEYS TERMINATED BY ':'
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: database:default
++POSTHOOK: Output: default@parquet_type_promotion_staging
++PREHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/parquet_type_promotion.txt' OVERWRITE INTO TABLE parquet_type_promotion_staging
++PREHOOK: type: LOAD
++#### A masked pattern was here ####
++PREHOOK: Output: default@parquet_type_promotion_staging
++POSTHOOK: query: LOAD DATA LOCAL INPATH '../../data/files/parquet_type_promotion.txt' OVERWRITE INTO TABLE parquet_type_promotion_staging
++POSTHOOK: type: LOAD
++#### A masked pattern was here ####
++POSTHOOK: Output: default@parquet_type_promotion_staging
++PREHOOK: query: SELECT * FROM parquet_type_promotion_staging
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parquet_type_promotion_staging
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM parquet_type_promotion_staging
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parquet_type_promotion_staging
++#### A masked pattern was here ####
++100	150	155	5643	6666	0.3	0.7	{"k1":11}	{"k1":71}	[7,17,22]	[9,11,13]	{"c1":10,"c2":20}	{"k11":4.0}	[2.3,3.0,5.5]	{"c1":5.7,"c2":4.8}
++200	250	255	5643	7777	0.4	0.8	{"k2":14}	{"k2":13}	[8,17,24]	[15,17,19]	{"c1":20,"c2":20}	{"v11":5.0}	[3.3,3.1,5.6]	{"c1":5.8,"c2":4.7}
++300	350	355	7643	8888	0.4	0.9	{"k3":12}	{"k3":19}	[9,17,25]	[21,23,25]	{"c1":30,"c2":60}	{"b11":6.0}	[4.3,3.2,5.7]	{"c1":5.9,"c2":4.6}
++400	450	455	8643	9999	0.4	0.5	{"k4":15}	{"k4":23}	[7,18,27]	[27,29,31]	{"c1":50,"c2":70}	{"d11":8.0}	[6.3,3.3,5.8]	{"c1":5.0,"c2":4.5}
++PREHOOK: query: CREATE TABLE parquet_type_promotion (
++  cint int,
++  cint2 int,
++  cint3 int,
++  clong bigint,
++  clong2 bigint,
++  cfloat float,
++  cdouble double,
++  m1 map<string, int>,
++  m2 map<string, bigint>,
++  l1 array<int>,
++  l2 array<bigint>,
++  st1 struct<c1:int, c2:int>,
++  fm1 map<string, float>,
++  fl1 array<float>,
++  fst1 struct<c1:float, c2:float>
++) STORED AS PARQUET
++PREHOOK: type: CREATETABLE
++PREHOOK: Output: database:default
++PREHOOK: Output: default@parquet_type_promotion
++POSTHOOK: query: CREATE TABLE parquet_type_promotion (
++  cint int,
++  cint2 int,
++  cint3 int,
++  clong bigint,
++  clong2 bigint,
++  cfloat float,
++  cdouble double,
++  m1 map<string, int>,
++  m2 map<string, bigint>,
++  l1 array<int>,
++  l2 array<bigint>,
++  st1 struct<c1:int, c2:int>,
++  fm1 map<string, float>,
++  fl1 array<float>,
++  fst1 struct<c1:float, c2:float>
++) STORED AS PARQUET
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: database:default
++POSTHOOK: Output: default@parquet_type_promotion
++PREHOOK: query: INSERT OVERWRITE TABLE parquet_type_promotion
++   SELECT * FROM parquet_type_promotion_staging
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parquet_type_promotion_staging
++PREHOOK: Output: default@parquet_type_promotion
++POSTHOOK: query: INSERT OVERWRITE TABLE parquet_type_promotion
++   SELECT * FROM parquet_type_promotion_staging
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parquet_type_promotion_staging
++POSTHOOK: Output: default@parquet_type_promotion
++POSTHOOK: Lineage: parquet_type_promotion.cdouble SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:cdouble, type:double, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.cfloat SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:cfloat, type:float, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.cint SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:cint, type:int, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.cint2 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:cint2, type:int, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.cint3 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:cint3, type:int, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.clong SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:clong, type:bigint, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.clong2 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:clong2, type:bigint, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.fl1 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:fl1, type:array<float>, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.fm1 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:fm1, type:map<string,float>, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.fst1 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:fst1, type:struct<c1:float,c2:float>, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.l1 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:l1, type:array<int>, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.l2 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:l2, type:array<bigint>, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.m1 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:m1, type:map<string,int>, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.m2 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:m2, type:map<string,bigint>, comment:null), ]
++POSTHOOK: Lineage: parquet_type_promotion.st1 SIMPLE [(parquet_type_promotion_staging)parquet_type_promotion_staging.FieldSchema(name:st1, type:struct<c1:int,c2:int>, comment:null), ]
++PREHOOK: query: -- This test covers HIVE-12475
++
++DROP TABLE arrays_of_struct_to_map
++PREHOOK: type: DROPTABLE
++POSTHOOK: query: -- This test covers HIVE-12475
++
++DROP TABLE arrays_of_struct_to_map
++POSTHOOK: type: DROPTABLE
++PREHOOK: query: CREATE TABLE arrays_of_struct_to_map (locations1 array<struct<c1:int,c2:int>>, locations2 array<struct<f1:int,
++f2:int,f3:int>>) STORED AS PARQUET
++PREHOOK: type: CREATETABLE
++PREHOOK: Output: database:default
++PREHOOK: Output: default@arrays_of_struct_to_map
++POSTHOOK: query: CREATE TABLE arrays_of_struct_to_map (locations1 array<struct<c1:int,c2:int>>, locations2 array<struct<f1:int,
++f2:int,f3:int>>) STORED AS PARQUET
++POSTHOOK: type: CREATETABLE
++POSTHOOK: Output: database:default
++POSTHOOK: Output: default@arrays_of_struct_to_map
++PREHOOK: query: INSERT INTO TABLE arrays_of_struct_to_map select array(named_struct("c1",1,"c2",2)), array(named_struct("f1",
++77,"f2",88,"f3",99)) FROM parquet_type_promotion LIMIT 1
++PREHOOK: type: QUERY
++PREHOOK: Input: default@parquet_type_promotion
++PREHOOK: Output: default@arrays_of_struct_to_map
++POSTHOOK: query: INSERT INTO TABLE arrays_of_struct_to_map select array(named_struct("c1",1,"c2",2)), array(named_struct("f1",
++77,"f2",88,"f3",99)) FROM parquet_type_promotion LIMIT 1
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@parquet_type_promotion
++POSTHOOK: Output: default@arrays_of_struct_to_map
++POSTHOOK: Lineage: arrays_of_struct_to_map.locations1 EXPRESSION []
++POSTHOOK: Lineage: arrays_of_struct_to_map.locations2 EXPRESSION []
++PREHOOK: query: SELECT * FROM arrays_of_struct_to_map
++PREHOOK: type: QUERY
++PREHOOK: Input: default@arrays_of_struct_to_map
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM arrays_of_struct_to_map
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@arrays_of_struct_to_map
++#### A masked pattern was here ####
++[{"c1":1,"c2":2}]	[{"f1":77,"f2":88,"f3":99}]
++PREHOOK: query: ALTER TABLE arrays_of_struct_to_map REPLACE COLUMNS (locations1 array<struct<c1:int,c2:int,c3:int>>, locations2
++array<struct<f1:int,f2:int,f3:int>>)
++PREHOOK: type: ALTERTABLE_REPLACECOLS
++PREHOOK: Input: default@arrays_of_struct_to_map
++PREHOOK: Output: default@arrays_of_struct_to_map
++POSTHOOK: query: ALTER TABLE arrays_of_struct_to_map REPLACE COLUMNS (locations1 array<struct<c1:int,c2:int,c3:int>>, locations2
++array<struct<f1:int,f2:int,f3:int>>)
++POSTHOOK: type: ALTERTABLE_REPLACECOLS
++POSTHOOK: Input: default@arrays_of_struct_to_map
++POSTHOOK: Output: default@arrays_of_struct_to_map
++PREHOOK: query: SELECT * FROM arrays_of_struct_to_map
++PREHOOK: type: QUERY
++PREHOOK: Input: default@arrays_of_struct_to_map
++#### A masked pattern was here ####
++POSTHOOK: query: SELECT * FROM arrays_of_struct_to_map
++POSTHOOK: type: QUERY
++POSTHOOK: Input: default@arrays_of_struct_to_map
++#### A masked pattern was here ####
++[{"c1":1,"c2":2,"c3":null}]	[{"f1":77,"f2":88,"f3":99}]
+-- 
+1.7.9.5
+

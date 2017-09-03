@@ -1,0 +1,105 @@
+From 90d8e29f42cfa4c39b6c08675fa2ae3f632075e3 Mon Sep 17 00:00:00 2001
+From: Yongzhi Chen <ychena@apache.org>
+Date: Mon, 15 Aug 2016 22:51:29 -0400
+Subject: [PATCH 654/723] CDH-43878: HIVE-14538: beeline throws exceptions
+ with parsing hive config when using !sh statement
+ (Yongzhi Chen, reviewed by Chaoyu Tang)
+
+Conflicts:
+	itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
+
+Change-Id: I5a3754ce022f2f4bc248b7d3fc13be3303b28c94
+(cherry picked from commit 39b95ff5a182a0bf727b40f1084aa17bd3142f94)
+---
+ .../src/java/org/apache/hive/beeline/Commands.java |   36 +++++++++++++-------
+ .../apache/hive/beeline/TestBeeLineWithArgs.java   |    8 +++++
+ 2 files changed, 31 insertions(+), 13 deletions(-)
+
+diff --git a/beeline/src/java/org/apache/hive/beeline/Commands.java b/beeline/src/java/org/apache/hive/beeline/Commands.java
+index 2fa2978..02e185f 100644
+--- a/beeline/src/java/org/apache/hive/beeline/Commands.java
++++ b/beeline/src/java/org/apache/hive/beeline/Commands.java
+@@ -683,10 +683,12 @@ public boolean sql(String line) {
+   private Map<String, String> getHiveVariables() {
+     Map<String, String> result = new HashMap<>();
+     BufferedRows rows = getConfInternal(true);
+-    while (rows.hasNext()) {
+-      Rows.Row row = (Rows.Row) rows.next();
+-      if (!row.isMeta) {
+-        result.put(row.values[0], row.values[1]);
++    if (rows != null) {
++      while (rows.hasNext()) {
++        Rows.Row row = (Rows.Row) rows.next();
++        if (!row.isMeta) {
++          result.put(row.values[0], row.values[1]);
++        }
+       }
+     }
+     return result;
+@@ -716,13 +718,19 @@ private BufferedRows getConfInternal(boolean call) {
+     Statement stmnt = null;
+     BufferedRows rows = null;
+     try {
+-      boolean hasResults;
+-      if (call) {
+-        stmnt = beeLine.getDatabaseConnection().getConnection().prepareCall("set");
+-        hasResults = ((CallableStatement) stmnt).execute();
+-      } else {
+-        stmnt = beeLine.createStatement();
+-        hasResults = stmnt.execute("set");
++      boolean hasResults = false;
++      DatabaseConnection dbconn = beeLine.getDatabaseConnection();
++      Connection conn = null;
++      if (dbconn != null)
++        conn = dbconn.getConnection();
++      if (conn != null) {
++        if (call) {
++          stmnt = conn.prepareCall("set");
++          hasResults = ((CallableStatement) stmnt).execute();
++        } else {
++          stmnt = beeLine.createStatement();
++          hasResults = stmnt.execute("set");
++        }
+       }
+       if (hasResults) {
+         ResultSet rs = stmnt.getResultSet();
+@@ -755,7 +763,8 @@ private void addConf(Rows.Row r, HiveConf hiveConf) {
+       return;
+     } else {
+       String[] kv = val.split("=", 2);
+-      hiveConf.set(kv[0], kv[1]);
++      if (kv.length == 2)
++        hiveConf.set(kv[0], kv[1]);
+     }
+   }
+ 
+@@ -999,7 +1008,8 @@ public boolean sh(String line) {
+     }
+ 
+     line = line.substring("sh".length()).trim();
+-    line = substituteVariables(getHiveConf(false), line.trim());
++    if (!beeLine.isBeeLine())
++      line = substituteVariables(getHiveConf(false), line.trim());
+ 
+     try {
+       ShellCmdExecutor executor = new ShellCmdExecutor(line, beeLine.getOutputStream(),
+diff --git a/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java b/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
+index 03861d9..11cebc4 100644
+--- a/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
++++ b/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
+@@ -760,4 +760,12 @@ public void testEmbeddedBeelineOutputs() throws Throwable{
+     final String EXPECTED_PATTERN = "Stage-1 map =";
+     testScriptFile(SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
+   }
++
++  @Test
++  public void testBeelineShellCommandWithoutConn() throws Throwable {
++    List<String> argList = new ArrayList<String>();
++    final String SCRIPT_TEXT = "!sh echo hello world";
++    final String EXPECTED_PATTERN = "hello world";
++    testScriptFile(SCRIPT_TEXT, EXPECTED_PATTERN, true, argList,true,false);
++  }
+ }
+-- 
+1.7.9.5
+

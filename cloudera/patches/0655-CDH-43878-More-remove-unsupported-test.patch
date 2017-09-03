@@ -1,0 +1,29 @@
+From 980ae2e3c3c5003fce8a73323c1ab4a0cd8dad5b Mon Sep 17 00:00:00 2001
+From: Yongzhi Chen <ychen@cloudera.com>
+Date: Tue, 6 Sep 2016 20:11:36 -0400
+Subject: [PATCH 655/723] CDH-43878: More remove unsupported test.
+
+Change-Id: I51e04dc17fe69ad272654d4a48b93940a702d30f
+---
+ .../apache/hive/beeline/TestBeeLineWithArgs.java   |    7 -------
+ 1 file changed, 7 deletions(-)
+
+diff --git a/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java b/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
+index 11cebc4..f97a63e 100644
+--- a/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
++++ b/itests/hive-unit/src/test/java/org/apache/hive/beeline/TestBeeLineWithArgs.java
+@@ -761,11 +761,4 @@ public void testEmbeddedBeelineOutputs() throws Throwable{
+     testScriptFile(SCRIPT_TEXT, EXPECTED_PATTERN, true, argList);
+   }
+ 
+-  @Test
+-  public void testBeelineShellCommandWithoutConn() throws Throwable {
+-    List<String> argList = new ArrayList<String>();
+-    final String SCRIPT_TEXT = "!sh echo hello world";
+-    final String EXPECTED_PATTERN = "hello world";
+-    testScriptFile(SCRIPT_TEXT, EXPECTED_PATTERN, true, argList,true,false);
+-  }
+ }
+-- 
+1.7.9.5
+
