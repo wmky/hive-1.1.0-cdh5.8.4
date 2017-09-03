@@ -380,9 +380,15 @@ public final class MetaDataFormatUtils {
   private static void displayAllParameters(Map<String, String> params, StringBuilder tableInfo) {
     List<String> keys = new ArrayList<String>(params.keySet());
     Collections.sort(keys);
+    String value = null;
     for (String key : keys) {
       tableInfo.append(FIELD_DELIM); // Ensures all params are indented.
-      formatOutput(key, StringEscapeUtils.escapeJava(params.get(key)), tableInfo);
+      value = params.get(key);
+      if (key.equals("comment") && value != null && value.getBytes().length!=key.length()){
+        formatOutput(key,value,tableInfo);
+      }else{
+        formatOutput(key, StringEscapeUtils.escapeJava(value), tableInfo);
+      }
     }
   }
 
